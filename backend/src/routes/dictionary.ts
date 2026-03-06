@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { pool } from '../config/database';
-import { authenticate } from '../middleware/auth';
+import pool from '../config/database';
+import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
 // 获取所有词典规则
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     const { category, auto_apply } = req.query;
 
@@ -40,7 +40,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // 获取单个词典规则
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -70,7 +70,7 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // 创建词典规则（管理员）
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
     // 检查是否是管理员
     const [users] = await pool.execute(
@@ -123,7 +123,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // 更新词典规则（管理员）
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', authMiddleware, async (req, res) => {
   try {
     // 检查是否是管理员
     const [users] = await pool.execute(
@@ -202,7 +202,7 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 // 删除词典规则（管理员）
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     // 检查是否是管理员
     const [users] = await pool.execute(
