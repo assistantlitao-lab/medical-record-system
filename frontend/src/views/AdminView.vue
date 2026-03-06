@@ -1,11 +1,33 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter()
+const themeStore = useThemeStore()
 const authStore = useAuthStore()
 const activeTab = ref('overview')
+
+// 模板列表
+const templates = ref<{ id: string; name: string; description: string; is_default: number; fieldCount: number }[]>([])
+const showAddTemplateModal = ref(false)
+const showEditTemplateModal = ref(false)
+const showTemplateFieldsModal = ref(false)
+const editingTemplate = ref<{ id: string; name: string; description: string; fields: any[] } | null>(null)
+const newTemplate = ref({ name: '', description: '' })
+const newField = ref({ name: '', field_key: '', type: 'textarea', required: false, placeholder: '', sort_order: 0 })
+
+// 回收站
+const recycleBinTab = ref('patients')
+const deletedPatients = ref<any[]>([])
+const deletedVisits = ref<any[]>([])
+
+const fieldTypes = [
+  { value: 'text', label: '文本' },
+  { value: 'textarea', label: '多行文本' },
+  { value: 'select', label: '下拉选择' }
+]
 
 // 统计数据
 const stats = ref({
@@ -44,15 +66,459 @@ async function loadUsers() {
 
 onMounted(() => {
   loadUsers()
+  loadTemplates()
+  loadDictionary()
 })
 
+// 加载模板列表
+async function loadTemplates() {
+  try {
+    const response = await fetch('/api/v1/templates', {
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+    if (!response.ok) {
+      throw new Error('加载模板列表失败')
+    }
+    const result = await response.json()
+    templates.value = result.data.map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      is_default: t.is_default,
+      fieldCount: t.fields?.length || 0
+    }))
+  } catch (error) {
+    console.error('加载模板失败:', error)
+  }
+}
+
+async function addTemplate() {
+  if (!newTemplate.value.name) {
+    alert('请输入模板名称')
+    return
+  }
+
+  try {
+    const response = await fetch('/api/v1/templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: JSON.stringify(newTemplate.value)
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `创建失败 (${response.status})`)
+    }
+
+    await loadTemplates()
+    showAddTemplateModal.value = false
+    newTemplate.value = { name: '', description: '' }
+    alert('创建成功')
+  } catch (error: any) {
+    alert(error.message || '创建失败')
+  }
+}
+
+async function saveEditTemplate() {
+  if (!editingTemplate.value) return
+
+  try {
+    const response = await fetch(`/api/v1/templates/${editingTemplate.value.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: JSON.stringify({
+        name: editingTemplate.value.name,
+        description: editingTemplate.value.description
+      })
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `更新失败 (${response.status})`)
+    }
+
+    await loadTemplates()
+    showEditTemplateModal.value = false
+    editingTemplate.value = null
+    alert('保存成功')
+  } catch (error: any) {
+    alert(error.message || '保存失败')
+  }
+}
+
+async function deleteTemplate(templateId: string) {
+  if (!confirm('确定删除该模板吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/templates/${templateId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `删除失败 (${response.status})`)
+    }
+
+    await loadTemplates()
+    alert('删除成功')
+  } catch (error: any) {
+    alert(error.message || '删除失败')
+  }
+}
+
+async function openEditTemplateModal(template: any) {
+  try {
+    const response = await fetch(`/api/v1/templates/${template.id}`, {
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+    if (!response.ok) {
+      throw new Error('加载模板详情失败')
+    }
+    const result = await response.json()
+    editingTemplate.value = {
+      id: result.data.id,
+      name: result.data.name,
+      description: result.data.description,
+      fields: result.data.fields || []
+    }
+    showEditTemplateModal.value = true
+  } catch (error) {
+    console.error('加载模板详情失败:', error)
+  }
+}
+
+function openTemplateFieldsModal(template: any) {
+  openEditTemplateModal(template).then(() => {
+    showTemplateFieldsModal.value = true
+  })
+}
+
+async function addField() {
+  if (!editingTemplate.value || !newField.value.name || !newField.value.field_key) {
+    alert('请输入字段名称和键名')
+    return
+  }
+
+  try {
+    const response = await fetch(`/api/v1/templates/${editingTemplate.value.id}/fields`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: JSON.stringify(newField.value)
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `添加失败 (${response.status})`)
+    }
+
+    // Reload template to get updated fields
+    await openEditTemplateModal(editingTemplate.value)
+    newField.value = { name: '', field_key: '', type: 'textarea', required: false, placeholder: '', sort_order: 0 }
+    alert('添加成功')
+  } catch (error: any) {
+    alert(error.message || '添加失败')
+  }
+}
+
+async function deleteField(fieldId: string) {
+  if (!editingTemplate.value) return
+  if (!confirm('确定删除该字段吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/templates/${editingTemplate.value.id}/fields/${fieldId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `删除失败 (${response.status})`)
+    }
+
+    await openEditTemplateModal(editingTemplate.value)
+    alert('删除成功')
+  } catch (error: any) {
+    alert(error.message || '删除失败')
+  }
+}
+
+// 加载词典规则
+// 加载回收站数据
+async function loadRecycleBin() {
+  try {
+    if (recycleBinTab.value === 'patients') {
+      const response = await fetch('/api/v1/admin/recycle-bin/patients', {
+        headers: { 'Authorization': `Bearer ${authStore.token}` }
+      })
+      if (response.ok) {
+        const result = await response.json()
+        deletedPatients.value = result.data.list
+      }
+    } else {
+      const response = await fetch('/api/v1/admin/recycle-bin/visits', {
+        headers: { 'Authorization': `Bearer ${authStore.token}` }
+      })
+      if (response.ok) {
+        const result = await response.json()
+        deletedVisits.value = result.data.list
+      }
+    }
+  } catch (error) {
+    console.error('加载回收站数据失败:', error)
+  }
+}
+
+async function restorePatient(patientId: string) {
+  if (!confirm('确定恢复该患者吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/admin/recycle-bin/patients/${patientId}/restore`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    if (response.ok) {
+      await loadRecycleBin()
+      alert('恢复成功')
+    } else {
+      throw new Error('恢复失败')
+    }
+  } catch (error) {
+    alert('恢复失败')
+  }
+}
+
+async function restoreVisit(visitId: string) {
+  if (!confirm('确定恢复该就诊记录吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/admin/recycle-bin/visits/${visitId}/restore`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    if (response.ok) {
+      await loadRecycleBin()
+      alert('恢复成功')
+    } else {
+      throw new Error('恢复失败')
+    }
+  } catch (error) {
+    alert('恢复失败')
+  }
+}
+
+async function permanentDeletePatient(patientId: string) {
+  if (!confirm('⚠️ 警告：永久删除将不可恢复！确定继续吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/admin/recycle-bin/patients/${patientId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    if (response.ok) {
+      await loadRecycleBin()
+      alert('已永久删除')
+    } else {
+      throw new Error('删除失败')
+    }
+  } catch (error) {
+    alert('删除失败')
+  }
+}
+
+async function permanentDeleteVisit(visitId: string) {
+  if (!confirm('⚠️ 警告：永久删除将不可恢复！确定继续吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/admin/recycle-bin/visits/${visitId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    if (response.ok) {
+      await loadRecycleBin()
+      alert('已永久删除')
+    } else {
+      throw new Error('删除失败')
+    }
+  } catch (error) {
+    alert('删除失败')
+  }
+}
+
+async function cleanupRecycleBin() {
+  if (!confirm('将清理30天前的所有项目，确定继续吗？')) return
+
+  try {
+    const response = await fetch('/api/v1/admin/recycle-bin/cleanup', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+      await loadRecycleBin()
+      alert(`清理完成：删除${result.data.deleted_patients}个患者，${result.data.deleted_visits}条就诊记录`)
+    } else {
+      throw new Error('清理失败')
+    }
+  } catch (error) {
+    alert('清理失败')
+  }
+}
+
+function formatDate(dateStr: string) {
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  return date.toLocaleString('zh-CN')
+}
+
+// 监听回收站标签切换
+watch(recycleBinTab, () => {
+  loadRecycleBin()
+})
+
+// 监听主标签切换
+watch(activeTab, (newTab) => {
+  if (newTab === 'recycle-bin') {
+    loadRecycleBin()
+  }
+})
+
+async function loadDictionary() {
+  try {
+    const response = await fetch('/api/v1/dictionary', {
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+    if (!response.ok) {
+      throw new Error('加载词典规则失败')
+    }
+    const result = await response.json()
+    dictionaryRules.value = result.data
+  } catch (error) {
+    console.error('加载词典规则失败:', error)
+  }
+}
+
+async function addDictRule() {
+  if (!newDictRule.value.error || !newDictRule.value.correct) {
+    alert('请填写错误词和正确词')
+    return
+  }
+
+  try {
+    const response = await fetch('/api/v1/dictionary', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: JSON.stringify({
+        error: newDictRule.value.error,
+        correct: newDictRule.value.correct,
+        category: newDictRule.value.category,
+        auto_apply: newDictRule.value.autoApply
+      })
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `创建失败 (${response.status})`)
+    }
+
+    await loadDictionary()
+    showAddDictModal.value = false
+    newDictRule.value = { error: '', correct: '', category: 'drugs', autoApply: true }
+    alert('创建成功')
+  } catch (error: any) {
+    alert(error.message || '创建失败')
+  }
+}
+
+async function deleteDictRule(ruleId: string) {
+  if (!confirm('确定删除该规则吗？')) return
+
+  try {
+    const response = await fetch(`/api/v1/dictionary/${ruleId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authStore.token}` }
+    })
+
+    const responseText = await response.text()
+    let result
+    try {
+      result = responseText ? JSON.parse(responseText) : {}
+    } catch (e) {
+      result = {}
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `删除失败 (${response.status})`)
+    }
+
+    await loadDictionary()
+    alert('删除成功')
+  } catch (error: any) {
+    alert(error.message || '删除失败')
+  }
+}
+
 // 词典规则
-const dictionaryRules = ref([
-  { id: '1', error: '阿莫吸林', correct: '阿莫西林', category: 'drugs', autoApply: true },
-  { id: '2', error: '头苞', correct: '头孢', category: 'drugs', autoApply: true },
-  { id: '3', error: '发绕', correct: '发热', category: 'symptoms', autoApply: true },
-  { id: '4', error: '咳速', correct: '咳嗽', category: 'symptoms', autoApply: true }
-])
+const dictionaryRules = ref<{ id: string; error: string; correct: string; category: string; auto_apply: number }[]>([])
 
 const showAddUserModal = ref(false)
 const showEditUserModal = ref(false)
@@ -175,19 +641,6 @@ async function saveEditUser() {
   }
 }
 
-async function addDictRule() {
-  // TODO: 调用API添加词典规则
-  dictionaryRules.value.push({
-    id: Date.now().toString(),
-    error: newDictRule.value.error,
-    correct: newDictRule.value.correct,
-    category: newDictRule.value.category,
-    autoApply: newDictRule.value.autoApply
-  })
-  showAddDictModal.value = false
-  newDictRule.value = { error: '', correct: '', category: 'drugs', autoApply: true }
-}
-
 async function deleteUser(userId: string) {
   if (!confirm('确定删除该用户吗？')) return
 
@@ -215,12 +668,6 @@ async function deleteUser(userId: string) {
     alert(error.message || '删除失败')
   }
 }
-
-function deleteDictRule(ruleId: string) {
-  if (confirm('确定删除该规则吗？')) {
-    dictionaryRules.value = dictionaryRules.value.filter(r => r.id !== ruleId)
-  }
-}
 </script>
 
 <template>
@@ -230,6 +677,9 @@ function deleteDictRule(ruleId: string) {
         <button class="back-btn" @click="router.back()">←</button>
         <h1>管理后台</h1>
       </div>
+    <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+        {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+      </button>
     </header>
 
     <div class="admin-tabs">
@@ -256,6 +706,18 @@ function deleteDictRule(ruleId: string) {
         @click="activeTab = 'logs'"
       >
         操作日志
+      </button>
+      <button
+        :class="['tab-btn', { active: activeTab === 'templates' }]"
+        @click="activeTab = 'templates'"
+      >
+        病历模板
+      </button>
+      <button
+        :class="['tab-btn', { active: activeTab === 'recycle-bin' }]"
+        @click="activeTab = 'recycle-bin'"
+      >
+        回收站
       </button>
     </div>
 
@@ -340,7 +802,7 @@ function deleteDictRule(ruleId: string) {
               <span class="arrow">→</span>
               <span class="correct-text">{{ rule.correct }}</span>
               <span class="category-badge">{{ getCategoryLabel(rule.category) }}</span>
-              <span v-if="rule.autoApply" class="auto-badge">自动</span>
+              <span v-if="rule.auto_apply" class="auto-badge">自动</span>
             </div>
             <button class="delete-btn" @click="deleteDictRule(rule.id)">删除</button>
           </div>
@@ -375,6 +837,105 @@ function deleteDictRule(ruleId: string) {
               <span class="log-user">王医生</span>
               <span class="log-action">登录系统</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 病历模板 -->
+      <div v-else-if="activeTab === 'templates'" class="templates-tab">
+        <div class="section-header">
+          <h2>病历模板管理</h2>
+          <button class="add-btn" @click="showAddTemplateModal = true">+ 新增模板</button>
+        </div>
+
+        <div class="templates-list">
+          <div v-for="template in templates" :key="template.id" class="template-card">
+            <div class="template-info">
+              <h3>
+                {{ template.name }}
+                <span v-if="template.is_default" class="default-badge">默认</span>
+              </h3>
+              <p class="template-desc">{{ template.description || '暂无描述' }}</p>
+              <p class="template-meta">字段数: {{ template.fieldCount }}</p>
+            </div>
+            <div class="template-actions">
+              <button class="edit-btn" @click="openEditTemplateModal(template)">编辑</button>
+              <button class="fields-btn" @click="openTemplateFieldsModal(template)">字段</button>
+              <button class="delete-btn" @click="deleteTemplate(template.id)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 回收站 -->
+      <div v-else-if="activeTab === 'recycle-bin'" class="recycle-bin-tab">
+        <div class="section-header">
+          <h2>回收站</h2>
+          <button class="cleanup-btn" @click="cleanupRecycleBin">清理30天前项目</button>
+        </div>
+
+        <div class="recycle-bin-tabs">
+          <button
+            :class="['sub-tab-btn', { active: recycleBinTab === 'patients' }]"
+            @click="recycleBinTab = 'patients'"
+          >
+            已删除患者
+          </button>
+          <button
+            :class="['sub-tab-btn', { active: recycleBinTab === 'visits' }]"
+            @click="recycleBinTab = 'visits'"
+          >
+            已删除就诊记录
+          </button>
+        </div>
+
+        <!-- 已删除患者 -->
+        <div v-if="recycleBinTab === 'patients'" class="deleted-list">
+          <div v-for="patient in deletedPatients" :key="patient.id" class="deleted-card">
+            <div class="deleted-info">
+              <h3>{{ patient.name }}</h3>
+              <p class="deleted-meta">
+                卡号: {{ patient.card_no || '-' }} | 电话: {{ patient.phone || '-' }}
+              </p>
+              <p class="deleted-meta">
+                创建人: {{ patient.creator_name || '-' }} | 就诊记录: {{ patient.visit_count }}条
+              </p>
+              <p class="deleted-time">
+                删除时间: {{ formatDate(patient.deleted_at) }}
+              </p>
+            </div>
+            <div class="deleted-actions">
+              <button class="restore-btn" @click="restorePatient(patient.id)">恢复</button>
+              <button class="permanent-delete-btn" @click="permanentDeletePatient(patient.id)">彻底删除</button>
+            </div>
+          </div>
+          <div v-if="deletedPatients.length === 0" class="empty-state">
+            暂无已删除的患者
+          </div>
+        </div>
+
+        <!-- 已删除就诊记录 -->
+        <div v-else class="deleted-list">
+          <div v-for="visit in deletedVisits" :key="visit.id" class="deleted-card">
+            <div class="deleted-info">
+              <h3>就诊 #{{ visit.visit_no }}</h3>
+              <p class="deleted-meta">
+                患者: {{ visit.patient_name || '-' }} | 创建人: {{ visit.creator_name || '-' }}
+              </p>
+              <p class="deleted-meta">
+                就诊日期: {{ visit.visit_date }}
+              </p>
+              <p class="deleted-time">
+                删除时间: {{ formatDate(visit.deleted_at) }}
+              </p>
+            </div>
+            <div class="deleted-actions">
+              <button class="restore-btn" @click="restoreVisit(visit.id)">恢复</button>
+              <button class="permanent-delete-btn" @click="permanentDeleteVisit(visit.id)">彻底删除</button>
+            </div>
+          </div>
+          <div v-if="deletedVisits.length === 0" class="empty-state">
+            暂无已删除的就诊记录
           </div>
         </div>
       </div>
@@ -462,21 +1023,100 @@ function deleteDictRule(ruleId: string) {
         </form>
       </div>
     </div>
+
+    <!-- 添加模板弹窗 -->
+    <div v-if="showAddTemplateModal" class="modal-overlay" @click="showAddTemplateModal = false">
+      <div class="modal-content" @click.stop>
+        <h2>新增病历模板</h2>
+        <form @submit.prevent="addTemplate">
+          <div class="form-group">
+            <label>模板名称</label>
+            <input v-model="newTemplate.name" type="text" placeholder="如：标准病历模板" required />
+          </div>
+          <div class="form-group">
+            <label>描述</label>
+            <input v-model="newTemplate.description" type="text" placeholder="模板描述（选填）" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" @click="showAddTemplateModal = false">取消</button>
+            <button type="submit" class="btn-primary">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 编辑模板弹窗 -->
+    <div v-if="showEditTemplateModal && editingTemplate" class="modal-overlay" @click="showEditTemplateModal = false">
+      <div class="modal-content" @click.stop>
+        <h2>编辑病历模板</h2>
+        <form @submit.prevent="saveEditTemplate">
+          <div class="form-group">
+            <label>模板名称</label>
+            <input v-model="editingTemplate.name" type="text" required />
+          </div>
+          <div class="form-group">
+            <label>描述</label>
+            <input v-model="editingTemplate.description" type="text" />
+          </div>
+
+          <!-- 字段管理 -->
+          <div class="field-management">
+            <h3>模板字段</h3>
+            <div class="fields-list">
+              <div v-for="field in editingTemplate.fields" :key="field.id" class="field-item">
+                <span class="field-name">{{ field.name }}</span>
+                <span class="field-key">{{ field.field_key }}</span>
+                <span :class="['field-type', field.type]">{{ field.type }}</span>
+                <span v-if="field.required" class="required-badge">必填</span>
+                <button type="button" class="delete-field-btn" @click="deleteField(field.id)">删除</button>
+              </div>
+            </div>
+
+            <div class="add-field-section">
+              <h4>添加新字段</h4>
+              <div class="form-row">
+                <input v-model="newField.name" type="text" placeholder="字段名称（如：主诉）" />
+                <input v-model="newField.field_key" type="text" placeholder="字段键（如：chief_complaint）" />
+              </div>
+              <div class="form-row">
+                <select v-model="newField.type">
+                  <option v-for="t in fieldTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
+                </select>
+                <input v-model="newField.placeholder" type="text" placeholder="提示文字" />
+              </div>
+              <div class="form-row">
+                <label class="checkbox-label">
+                  <input v-model="newField.required" type="checkbox" />
+                  必填
+                </label>
+                <input v-model.number="newField.sort_order" type="number" placeholder="排序" />
+              </div>
+              <button type="button" class="add-field-btn" @click="addField">添加字段</button>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" @click="showEditTemplateModal = false">取消</button>
+            <button type="submit" class="btn-primary">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .admin-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--color-background);
 }
 
 .page-header {
   display: flex;
   align-items: center;
   padding: 16px 40px;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 @media (max-width: 768px) {
@@ -495,7 +1135,7 @@ function deleteDictRule(ruleId: string) {
   background: none;
   border: none;
   font-size: 20px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -507,8 +1147,8 @@ function deleteDictRule(ruleId: string) {
 /* Tabs */
 .admin-tabs {
   display: flex;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   padding: 0 40px;
 }
@@ -526,7 +1166,7 @@ function deleteDictRule(ruleId: string) {
   background: none;
   border: none;
   font-size: 14px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
@@ -559,7 +1199,7 @@ function deleteDictRule(ruleId: string) {
 }
 
 .stat-card {
-  background: white;
+  background: var(--color-card-bg);
   padding: 20px;
   border-radius: 12px;
   text-align: center;
@@ -574,7 +1214,7 @@ function deleteDictRule(ruleId: string) {
 
 .stat-label {
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .metric-cards {
@@ -584,7 +1224,7 @@ function deleteDictRule(ruleId: string) {
 }
 
 .metric-card {
-  background: white;
+  background: var(--color-card-bg);
   padding: 16px;
   border-radius: 12px;
 }
@@ -592,14 +1232,14 @@ function deleteDictRule(ruleId: string) {
 .metric-card h3 {
   margin: 0 0 10px 0;
   font-size: 14px;
-  color: #666;
+  color: var(--color-text);
   font-weight: normal;
 }
 
 .metric-value {
   font-size: 28px;
   font-weight: 600;
-  color: #333;
+  color: var(--color-text);
   margin-bottom: 4px;
 }
 
@@ -614,7 +1254,7 @@ function deleteDictRule(ruleId: string) {
 }
 
 .quick-actions {
-  background: white;
+  background: var(--color-card-bg);
   padding: 16px;
   border-radius: 12px;
 }
@@ -636,7 +1276,7 @@ function deleteDictRule(ruleId: string) {
   border: none;
   border-radius: 8px;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -673,7 +1313,7 @@ function deleteDictRule(ruleId: string) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
+  background: var(--color-card-bg);
   padding: 16px;
   border-radius: 12px;
 }
@@ -686,7 +1326,7 @@ function deleteDictRule(ruleId: string) {
 .user-phone, .user-meta {
   margin: 0;
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .user-actions {
@@ -760,7 +1400,7 @@ function deleteDictRule(ruleId: string) {
 
 /* Logs Tab */
 .log-item {
-  background: white;
+  background: var(--color-card-bg);
   padding: 14px 16px;
   border-radius: 12px;
 }
@@ -777,11 +1417,11 @@ function deleteDictRule(ruleId: string) {
 
 .log-user {
   font-weight: 500;
-  color: #333;
+  color: var(--color-text);
 }
 
 .log-action {
-  color: #666;
+  color: var(--color-text);
   margin: 0 4px;
 }
 
@@ -807,7 +1447,7 @@ function deleteDictRule(ruleId: string) {
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 16px 16px 0 0;
   padding: 20px;
   overflow-y: auto;
@@ -826,7 +1466,7 @@ function deleteDictRule(ruleId: string) {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .form-group input,
@@ -861,11 +1501,334 @@ function deleteDictRule(ruleId: string) {
 
 .btn-secondary {
   background: #f0f0f0;
-  color: #666;
+  color: var(--color-text);
 }
 
 .btn-primary {
   background: #667eea;
   color: white;
+}
+
+/* Templates Tab */
+.templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.template-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--color-card-bg);
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.template-info h3 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.default-badge {
+  padding: 2px 8px;
+  background: #e8f5e9;
+  color: #388e3c;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.template-desc {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.template-meta {
+  margin: 0;
+  font-size: 12px;
+  color: #999;
+}
+
+.template-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fields-btn {
+  padding: 6px 12px;
+  background: #e8f5e9;
+  color: #388e3c;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.fields-btn:hover {
+  background: #c8e6c9;
+}
+
+/* Field Management */
+.field-management {
+  margin: 20px 0;
+  padding: 16px;
+  background: var(--color-background-soft);
+  border-radius: 8px;
+}
+
+.field-management h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--color-card-bg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.field-name {
+  font-weight: 500;
+  color: var(--color-text);
+  min-width: 80px;
+}
+
+.field-key {
+  color: var(--color-text);
+  font-family: monospace;
+  font-size: 12px;
+  flex: 1;
+}
+
+.field-type {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.field-type.text {
+  background: #e3f2fd;
+  color: #1976d2;
+}
+
+.field-type.textarea {
+  background: #fff3e0;
+  color: #f57c00;
+}
+
+.field-type.select {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.required-badge {
+  padding: 2px 8px;
+  background: #ffebee;
+  color: #c62828;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.delete-field-btn {
+  padding: 4px 10px;
+  background: #ffebee;
+  color: #e74c3c;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.add-field-section {
+  padding-top: 16px;
+  border-top: 1px dashed #ddd;
+}
+
+.add-field-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.form-row input,
+.form-row select {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.add-field-btn {
+  padding: 8px 16px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.add-field-btn:hover {
+  background: #5a6fd6;
+}
+
+/* Recycle Bin */
+.cleanup-btn {
+  padding: 8px 14px;
+  background: #ff9800;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cleanup-btn:hover {
+  background: #f57c00;
+}
+
+.recycle-bin-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.sub-tab-btn {
+  padding: 10px 20px;
+  background: #f0f0f0;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.sub-tab-btn.active {
+  background: #667eea;
+  color: white;
+}
+
+.deleted-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deleted-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--color-card-bg);
+  padding: 16px;
+  border-radius: 12px;
+  border-left: 4px solid #e74c3c;
+}
+
+.deleted-info h3 {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  color: var(--color-text);
+}
+
+.deleted-meta {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.deleted-time {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #e74c3c;
+}
+
+.deleted-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.restore-btn {
+  padding: 8px 16px;
+  background: #e8f5e9;
+  color: #388e3c;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.restore-btn:hover {
+  background: #c8e6c9;
+}
+
+.permanent-delete-btn {
+  padding: 8px 16px;
+  background: #ffebee;
+  color: #c62828;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.permanent-delete-btn:hover {
+  background: #ffcdd2;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+  font-size: 14px;
+}
+.theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
 }
 </style>

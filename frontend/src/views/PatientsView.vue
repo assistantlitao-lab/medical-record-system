@@ -2,9 +2,11 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
 interface Patient {
   id: string
@@ -130,6 +132,9 @@ function formatDate(dateStr: string | null) {
         <button class="back-btn" @click="router.back()">←</button>
         <h1>患者管理</h1>
       </div>
+      <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+        {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+      </button>
       <button class="add-btn" @click="showAddModal = true">+ 新增患者</button>
     </header>
 
@@ -215,7 +220,7 @@ function formatDate(dateStr: string | null) {
 <style scoped>
 .patients-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--color-background);
 }
 
 .page-header {
@@ -223,8 +228,8 @@ function formatDate(dateStr: string | null) {
   justify-content: space-between;
   align-items: center;
   padding: 16px 40px;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 @media (max-width: 768px) {
@@ -243,7 +248,7 @@ function formatDate(dateStr: string | null) {
   background: none;
   border: none;
   font-size: 20px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -264,7 +269,7 @@ function formatDate(dateStr: string | null) {
 
 .search-bar {
   padding: 12px 40px;
-  background: white;
+  background: var(--color-card-bg);
 }
 
 @media (max-width: 768px) {
@@ -299,7 +304,7 @@ function formatDate(dateStr: string | null) {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   margin-bottom: 12px;
   cursor: pointer;
@@ -314,7 +319,7 @@ function formatDate(dateStr: string | null) {
 .patient-meta {
   margin: 0;
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .patient-meta span {
@@ -329,7 +334,7 @@ function formatDate(dateStr: string | null) {
 
 .visit-count {
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .arrow {
@@ -346,7 +351,7 @@ function formatDate(dateStr: string | null) {
 .loading {
   text-align: center;
   padding: 40px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 /* Modal */
@@ -367,7 +372,7 @@ function formatDate(dateStr: string | null) {
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 16px 16px 0 0;
   padding: 20px;
   overflow-y: auto;
@@ -386,7 +391,7 @@ function formatDate(dateStr: string | null) {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .form-group input,
@@ -417,12 +422,25 @@ function formatDate(dateStr: string | null) {
 .btn-secondary {
   background: #f0f0f0;
   border: none;
-  color: #666;
+  color: var(--color-text);
 }
 
 .btn-primary {
   background: #667eea;
   border: none;
   color: white;
+}
+.theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
 }
 </style>

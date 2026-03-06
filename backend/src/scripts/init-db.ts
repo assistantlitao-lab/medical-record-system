@@ -64,6 +64,9 @@ async function initDatabase() {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
           last_login_at DATETIME COMMENT '最后登录时间',
+          failed_login_count INT DEFAULT 0 COMMENT '连续登录失败次数',
+          locked_until DATETIME COMMENT '账户锁定截止时间',
+          is_admin TINYINT DEFAULT 0 COMMENT '是否管理员',
           UNIQUE KEY uk_phone (phone)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表'`,
 

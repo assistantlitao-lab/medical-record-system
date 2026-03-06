@@ -290,4 +290,161 @@ router.delete('/dictionary/:rule_id', asyncHandler(async (req: AuthRequest, res:
   res.json({ code: 200 });
 }));
 
+// 回收站 - 获取已删除的患者列表
+router.get('/recycle-bin/patients', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const pageSize = parseInt(req.query.page_size as string) || 20;
+  const offset = (page - 1) * pageSize;
+
+  const [patients] = await pool.query(
+    `SELECT p.*, u.name as creator_name,
+      (SELECT COUNT(*) FROM visit_records WHERE patient_id = p.id) as visit_count
+     FROM patients p
+     LEFT JOIN users u ON p.user_id = u.id
+     WHERE p.deleted_at IS NOT NULL
+     ORDER BY p.deleted_at DESC
+     LIMIT ${pageSize} OFFSET ${offset}`
+  ) as any;
+
+  res.json({
+    code: 200,
+    data: { list: patients }
+  });
+}));
+
+// 回收站 - 获取已删除的就诊记录列表
+router.get('/recycle-bin/visits', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const page = parseInt(req.query.page as string) || 1;
+  const pageSize = parseInt(req.query.page_size as string) || 20;
+  const offset = (page - 1) * pageSize;
+
+  const [visits] = await pool.query(
+    `SELECT v.*, p.name as patient_name, u.name as creator_name
+     FROM visit_records v
+     LEFT JOIN patients p ON v.patient_id = p.id
+     LEFT JOIN users u ON v.user_id = u.id
+     WHERE v.deleted_at IS NOT NULL
+     ORDER BY v.deleted_at DESC
+     LIMIT ${pageSize} OFFSET ${offset}`
+  ) as any;
+
+  res.json({
+    code: 200,
+    data: { list: visits }
+  });
+}));
+
+// 回收站 - 恢复患者
+router.post('/recycle-bin/patients/:id/restore', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+
+  await pool.execute(
+    'UPDATE patients SET deleted_at = NULL WHERE id = ?',
+    [id]
+  );
+
+  res.json({ code: 200, message: '恢复成功' });
+}));
+
+// 回收站 - 恢复就诊记录
+router.post('/recycle-bin/visits/:id/restore', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+
+  await pool.execute(
+    'UPDATE visit_records SET deleted_at = NULL WHERE id = ?',
+    [id]
+  );
+
+  res.json({ code: 200, message: '恢复成功' });
+}));
+
+// 回收站 - 永久删除患者（及关联记录）
+router.delete('/recycle-bin/patients/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+
+  // 删除关联的录音文件和记录
+  const [recordings] = await pool.execute(
+    'SELECT id FROM recordings WHERE visit_id IN (SELECT id FROM visit_records WHERE patient_id = ?)',
+    [id]
+  ) as any;
+
+  for (const rec of recordings) {
+    await pool.execute('DELETE FROM recordings WHERE id = ?', [rec.id]);
+  }
+
+  // 删除就诊记录
+  await pool.execute('DELETE FROM visit_records WHERE patient_id = ?', [id]);
+
+  // 删除患者
+  await pool.execute('DELETE FROM patients WHERE id = ?', [id]);
+
+  res.json({ code: 200, message: '已永久删除' });
+}));
+
+// 回收站 - 永久删除就诊记录
+router.delete('/recycle-bin/visits/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+
+  // 删除关联的录音
+  const [recordings] = await pool.execute(
+    'SELECT id FROM recordings WHERE visit_id = ?',
+    [id]
+  ) as any;
+
+  for (const rec of recordings) {
+    await pool.execute('DELETE FROM recordings WHERE id = ?', [rec.id]);
+  }
+
+  // 删除版本历史
+  await pool.execute('DELETE FROM record_versions WHERE visit_id = ?', [id]);
+
+  // 删除就诊记录
+  await pool.execute('DELETE FROM visit_records WHERE id = ?', [id]);
+
+  res.json({ code: 200, message: '已永久删除' });
+}));
+
+// 回收站 - 清空超期项目（30天）
+router.post('/recycle-bin/cleanup', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  // 获取超期的就诊记录
+  const [oldVisits] = await pool.execute(
+    'SELECT id FROM visit_records WHERE deleted_at < ?',
+    [thirtyDaysAgo]
+  ) as any;
+
+  for (const visit of oldVisits) {
+    // 删除关联的录音
+    await pool.execute('DELETE FROM recordings WHERE visit_id = ?', [visit.id]);
+    // 删除版本历史
+    await pool.execute('DELETE FROM record_versions WHERE visit_id = ?', [visit.id]);
+  }
+
+  // 删除超期就诊记录
+  await pool.execute('DELETE FROM visit_records WHERE deleted_at < ?', [thirtyDaysAgo]);
+
+  // 获取已没有就诊记录的超期患者
+  const [oldPatients] = await pool.execute(
+    `SELECT id FROM patients
+     WHERE deleted_at < ?
+     AND id NOT IN (SELECT DISTINCT patient_id FROM visit_records WHERE patient_id IS NOT NULL)`,
+    [thirtyDaysAgo]
+  ) as any;
+
+  for (const patient of oldPatients) {
+    await pool.execute('DELETE FROM patients WHERE id = ?', [patient.id]);
+  }
+
+  res.json({
+    code: 200,
+    message: '清理完成',
+    data: {
+      deleted_visits: oldVisits.length,
+      deleted_patients: oldPatients.length
+    }
+  });
+}));
+
 export default router;

@@ -2,10 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const patientId = route.params.id as string
 
 interface Visit {
@@ -226,6 +228,9 @@ async function savePatientEdit() {
         <button class="back-btn" @click="router.back()">←</button>
         <h1>{{ patient.name }}</h1>
       </div>
+      <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+        {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+      </button>
       <button class="edit-btn" @click="openEditModal">编辑</button>
     </header>
 
@@ -340,7 +345,7 @@ async function savePatientEdit() {
 <style scoped>
 .patient-detail-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--color-background);
   padding-bottom: 20px;
 }
 
@@ -349,8 +354,8 @@ async function savePatientEdit() {
   justify-content: space-between;
   align-items: center;
   padding: 16px 40px;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 @media (max-width: 768px) {
@@ -369,7 +374,7 @@ async function savePatientEdit() {
   background: none;
   border: none;
   font-size: 20px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -384,14 +389,14 @@ async function savePatientEdit() {
   border: none;
   border-radius: 6px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
 .patient-card {
   margin: 12px auto;
   padding: 16px 40px;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   max-width: 1520px;
 }
@@ -421,12 +426,12 @@ async function savePatientEdit() {
 }
 
 .label {
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
   font-size: 14px;
 }
 
 .value {
-  color: #333;
+  color: var(--color-text);
   font-size: 14px;
 }
 
@@ -468,7 +473,7 @@ async function savePatientEdit() {
 
 .count {
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .new-visit-btn {
@@ -514,7 +519,7 @@ async function savePatientEdit() {
 .visit-card {
   flex: 1;
   padding: 14px;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 10px;
 }
 
@@ -527,7 +532,7 @@ async function savePatientEdit() {
 
 .visit-date {
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
   font-weight: 500;
 }
 
@@ -539,7 +544,7 @@ async function savePatientEdit() {
 
 .status-draft {
   background: #f0f0f0;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .status-editing {
@@ -558,7 +563,7 @@ async function savePatientEdit() {
 
 .visit-content p {
   margin: 4px 0;
-  color: #666;
+  color: var(--color-text);
 }
 
 .complaint {
@@ -579,13 +584,13 @@ async function savePatientEdit() {
 .loading {
   text-align: center;
   padding: 60px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .error-state {
   text-align: center;
   padding: 60px 20px;
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
 }
 
 .error-state p {
@@ -619,7 +624,7 @@ async function savePatientEdit() {
   width: 100%;
   max-width: 500px;
   max-height: 80vh;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 16px 16px 0 0;
   padding: 20px;
   overflow-y: auto;
@@ -638,7 +643,7 @@ async function savePatientEdit() {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .form-group input,
@@ -668,12 +673,25 @@ async function savePatientEdit() {
 .btn-secondary {
   background: #f0f0f0;
   border: none;
-  color: #666;
+  color: var(--color-text);
 }
 
 .btn-primary {
   background: #667eea;
   border: none;
   color: white;
+}
+.theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
 }
 </style>

@@ -13,6 +13,7 @@ import visitRoutes from './routes/visits.js';
 import recordingRoutes from './routes/recordings.js';
 import templateRoutes from './routes/templates.js';
 import adminRoutes from './routes/admin.js';
+import dictionaryRoutes from './routes/dictionary.js';
 import { errorHandler } from './middleware/error.js';
 import { initWebSocket } from './services/websocket.js';
 
@@ -45,6 +46,7 @@ app.use('/api/v1/patients', patientRoutes);
 app.use('/api/v1/visits', visitRoutes);
 app.use('/api/v1/recordings', recordingRoutes);
 app.use('/api/v1/templates', templateRoutes);
+app.use('/api/v1/dictionary', dictionaryRoutes);
 app.use('/api/v1/admin', adminRoutes);
 
 // 健康检查

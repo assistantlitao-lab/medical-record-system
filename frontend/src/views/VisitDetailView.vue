@@ -2,17 +2,22 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const visitId = route.params.id as string
 const patientId = route.query.patientId as string
 
 // 状态
 const currentStep = ref<'recording' | 'transcribing' | 'generating' | 'editing'>('recording')
 const isRecording = ref(false)
+const isPaused = ref(false)
 const recordingTime = ref(0)
+const totalPausedTime = ref(0)
+const pauseStartTime = ref(0)
 const transcription = ref('')
 const generatedRecord = ref<any>(null)
 const selectedTemplate = ref('')
@@ -57,6 +62,77 @@ function triggerFileUpload() {
   fileInput.value?.click()
 }
 
+// 分片上传文件
+async function uploadFileInChunks(file: File): Promise<string> {
+  const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB per chunk
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+
+  // 1. 初始化上传
+  const initRes = await fetch('/api/v1/recordings/init', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authStore.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      filename: file.name,
+      file_size: file.size,
+      mime_type: file.type
+    })
+  })
+
+  if (!initRes.ok) {
+    throw new Error('初始化上传失败')
+  }
+
+  const initData = await initRes.json()
+  const uploadId = initData.data.upload_id
+
+  // 2. 上传分片
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const chunk = file.slice(start, end)
+
+    const formData = new FormData()
+    formData.append('chunk', chunk, `${file.name}.part${i}`)
+
+    const chunkRes = await fetch(`/api/v1/recordings/${uploadId}/chunks/${i}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authStore.token}`
+      },
+      body: formData
+    })
+
+    if (!chunkRes.ok) {
+      throw new Error(`上传分片 ${i + 1}/${totalChunks} 失败`)
+    }
+
+    // 更新进度
+    uploadProgress.value = Math.round(((i + 1) / totalChunks) * 100)
+  }
+
+  // 3. 完成上传
+  const completeRes = await fetch(`/api/v1/recordings/${uploadId}/complete`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${authStore.token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      visit_id: visitId
+    })
+  })
+
+  if (!completeRes.ok) {
+    throw new Error('完成上传失败')
+  }
+
+  const completeData = await completeRes.json()
+  return completeData.data.recording_id
+}
+
 // 处理文件上传
 async function handleFileUpload(event: Event) {
   const target = event.target as HTMLInputElement
@@ -70,9 +146,9 @@ async function handleFileUpload(event: Event) {
     return
   }
 
-  // 验证文件大小 (最大 50MB)
-  if (file.size > 50 * 1024 * 1024) {
-    alert('文件大小不能超过 50MB')
+  // 验证文件大小 (最大 500MB)
+  if (file.size > 500 * 1024 * 1024) {
+    alert('文件大小不能超过 500MB')
     return
   }
 
@@ -80,32 +156,41 @@ async function handleFileUpload(event: Event) {
   uploadProgress.value = 0
 
   try {
-    const formData = new FormData()
-    formData.append('audio', file)
-    formData.append('visit_id', visitId)
+    let recordingId: string
 
-    const res = await fetch('/api/v1/recordings/upload', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authStore.token}`
-      },
-      body: formData
-    })
+    // 小文件使用简单上传，大文件使用分片上传
+    if (file.size < 5 * 1024 * 1024) {
+      // 简单上传
+      const formData = new FormData()
+      formData.append('audio', file)
+      formData.append('visit_id', visitId)
 
-    if (!res.ok) {
-      const err = await res.json()
-      throw new Error(err.message || '上传失败')
+      const res = await fetch('/api/v1/recordings/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authStore.token}`
+        },
+        body: formData
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.message || '上传失败')
+      }
+
+      const data = await res.json()
+      recordingId = data.data.recording_id
+    } else {
+      // 分片上传
+      recordingId = await uploadFileInChunks(file)
     }
 
-    const data = await res.json()
-    if (data.code === 201) {
-      alert('音频上传成功')
-      // 重新加载就诊详情以获取新上传的录音
-      await loadVisitDetail()
-      // 如果上传成功且有录音，自动开始转写
-      if (data.data.recording_id) {
-        await startTranscription(data.data.recording_id)
-      }
+    alert('音频上传成功')
+    // 重新加载就诊详情以获取新上传的录音
+    await loadVisitDetail()
+    // 如果上传成功且有录音，自动开始转写
+    if (recordingId) {
+      await startTranscription(recordingId)
     }
   } catch (err: any) {
     console.error('上传失败:', err)
@@ -338,13 +423,63 @@ function toggleRecording() {
   }
 }
 
+function pauseRecording() {
+  if (!isRecording.value || isPaused.value) return
+
+  isPaused.value = true
+  pauseStartTime.value = Date.now()
+
+  // 暂停计时器
+  if (recordingTimer) {
+    clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+
+  // 暂停MediaRecorder
+  if (ws && (ws as any).mediaRecorder) {
+    (ws as any).mediaRecorder.pause()
+  }
+
+  // 发送暂停标记到服务器
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'pause', timestamp: Date.now() }))
+  }
+}
+
+function resumeRecording() {
+  if (!isRecording.value || !isPaused.value) return
+
+  // 计算暂停时长
+  const pausedDuration = Math.floor((Date.now() - pauseStartTime.value) / 1000)
+  totalPausedTime.value += pausedDuration
+
+  isPaused.value = false
+
+  // 恢复计时器
+  recordingTimer = window.setInterval(() => {
+    recordingTime.value++
+  }, 1000)
+
+  // 恢复MediaRecorder
+  if (ws && (ws as any).mediaRecorder) {
+    (ws as any).mediaRecorder.resume()
+  }
+
+  // 发送恢复标记到服务器
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'resume', timestamp: Date.now() }))
+  }
+}
+
 async function startRecording() {
   try {
     // 请求麦克风权限
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
     isRecording.value = true
+    isPaused.value = false
     recordingTime.value = 0
+    totalPausedTime.value = 0
     recordingTimer = window.setInterval(() => {
       recordingTime.value++
     }, 1000)
@@ -358,7 +493,7 @@ async function startRecording() {
       // 开始发送音频数据
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+        if (event.data.size > 0 && ws?.readyState === WebSocket.OPEN && !isPaused.value) {
           ws.send(event.data)
         }
       }
@@ -384,6 +519,7 @@ async function startRecording() {
 
 function stopRecording() {
   isRecording.value = false
+  isPaused.value = false
   if (recordingTimer) {
     clearInterval(recordingTimer)
     recordingTimer = null
@@ -586,28 +722,246 @@ async function saveMedicalRecord() {
   }
 }
 
+// 导出格式选项
+const exportFormat = ref<'pdf' | 'word' | 'print'>('pdf')
+const showExportModal = ref(false)
+
+function openExportModal() {
+  showExportModal.value = true
+}
+
+function closeExportModal() {
+  showExportModal.value = false
+}
+
 async function exportRecord() {
-  // 简单的打印/导出功能
+  if (exportFormat.value === 'print') {
+    exportPrint()
+  } else if (exportFormat.value === 'pdf') {
+    exportPDF()
+  } else if (exportFormat.value === 'word') {
+    exportWord()
+  }
+  closeExportModal()
+}
+
+// 打印导出
+function exportPrint() {
   const printWindow = window.open('', '_blank')
   if (printWindow) {
+    const patientInfo = visitData.value?.patient_name ? `
+      <div style="margin-bottom: 30px; padding: 20px; background: #f8f8f8; border-radius: 8px;">
+        <h2 style="margin: 0 0 15px 0; color: var(--color-text);">患者信息</h2>
+        <p style="margin: 5px 0;"><strong>姓名:</strong> ${visitData.value.patient_name}</p>
+        <p style="margin: 5px 0;"><strong>就诊编号:</strong> ${visitData.value.visit_no || '-'}</p>
+        <p style="margin: 5px 0;"><strong>就诊日期:</strong> ${visitData.value.visit_date ? new Date(visitData.value.visit_date).toLocaleDateString('zh-CN') : '-'}</p>
+      </div>
+    ` : ''
+
     const content = `
       <html>
-        <head><title>病历导出</title></head>
-        <body style="font-family: sans-serif; padding: 40px;">
-          <h1>病历记录</h1>
-          ${Object.entries(medicalRecord.value).map(([key, value]) => `
-            <div style="margin-bottom: 20px;">
-              <h3 style="margin-bottom: 8px; color: #333;">${value.name}</h3>
-              <p style="line-height: 1.6; margin: 0;">${value.content}</p>
-            </div>
-          `).join('')}
+        <head>
+          <title>病历记录 - ${visitData.value?.patient_name || '导出'}</title>
+          <style>
+            @media print {
+              body { padding: 20px; }
+              .no-print { display: none; }
+            }
+          .theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
+}
+</style>
+        </head>
+        <body style="font-family: 'SimSun', 'Microsoft YaHei', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
+          <div class="no-print" style="text-align: center; margin-bottom: 30px; padding: 15px; background: #667eea; color: white; border-radius: 8px; cursor: pointer;" onclick="window.print()">
+            点击打印或另存为PDF
+          </div>
+
+          <h1 style="text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px;">病历记录</h1>
+
+          ${patientInfo}
+
+          <div style="margin-bottom: 30px;">
+            <h2 style="color: var(--color-text); border-left: 4px solid #667eea; padding-left: 15px;">病历内容</h2>
+            ${Object.entries(medicalRecord.value).map(([key, value]) => `
+              <div style="margin-bottom: 25px; padding: 15px; border: 1px solid #eee; border-radius: 8px;">
+                <h3 style="margin: 0 0 10px 0; color: #667eea; font-size: 16px;">${value.name}</h3>
+                <p style="line-height: 1.8; margin: 0; color: var(--color-text); white-space: pre-wrap;">${value.content || '无'}</p>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #999; text-align: center;">
+            <p>本病历由AI病历自动生成系统创建</p>
+            <p>生成时间: ${new Date().toLocaleString('zh-CN')}</p>
+          </div>
         </body>
       </html>
     `
     printWindow.document.write(content)
     printWindow.document.close()
-    printWindow.print()
   }
+}
+
+// PDF导出
+async function exportPDF() {
+  // 使用浏览器打印功能保存为PDF
+  const printWindow = window.open('', '_blank')
+  if (printWindow) {
+    const patientInfo = visitData.value?.patient_name ? `
+      <div style="margin-bottom: 30px; padding: 20px; background: #f8f8f8; border-radius: 8px;">
+        <h2 style="margin: 0 0 15px 0; color: var(--color-text);">患者信息</h2>
+        <p style="margin: 5px 0;"><strong>姓名:</strong> ${visitData.value.patient_name}</p>
+        <p style="margin: 5px 0;"><strong>就诊编号:</strong> ${visitData.value.visit_no || '-'}</p>
+        <p style="margin: 5px 0;"><strong>就诊日期:</strong> ${visitData.value.visit_date ? new Date(visitData.value.visit_date).toLocaleDateString('zh-CN') : '-'}</p>
+      </div>
+    ` : ''
+
+    const content = `
+      <html>
+        <head>
+          <title>病历记录 - ${visitData.value?.patient_name || '导出'}</title>
+          <style>
+            @media print {
+              body { padding: 20px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .no-print { display: none !important; }
+            }
+            * { box-sizing: border-box; }
+          .theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
+}
+</style>
+        </head>
+        <body style="font-family: 'SimSun', 'Microsoft YaHei', sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; color: var(--color-text);">
+          <div class="no-print" style="text-align: center; margin-bottom: 30px;">
+            <button onclick="window.print()" style="padding: 12px 30px; background: #667eea; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer;">
+              保存为PDF
+            </button>
+            <p style="color: #999; font-size: 13px; margin-top: 10px;">点击后选择"目标打印机"→"另存为PDF"</p>
+          </div>
+
+          <h1 style="text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px;">病历记录</h1>
+
+          ${patientInfo}
+
+          <div style="margin-bottom: 30px;">
+            <h2 style="color: var(--color-text); border-left: 4px solid #667eea; padding-left: 15px;">病历内容</h2>
+            ${Object.entries(medicalRecord.value).map(([key, value]) => `
+              <div style="margin-bottom: 25px; padding: 15px; border: 1px solid #eee; border-radius: 8px; page-break-inside: avoid;">
+                <h3 style="margin: 0 0 10px 0; color: #667eea; font-size: 16px;">${value.name}</h3>
+                <p style="line-height: 1.8; margin: 0; color: var(--color-text); white-space: pre-wrap;">${value.content || '无'}</p>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #999; text-align: center;">
+            <p>本病历由AI病历自动生成系统创建</p>
+            <p>生成时间: ${new Date().toLocaleString('zh-CN')}</p>
+          </div>
+        </body>
+      </html>
+    `
+    printWindow.document.write(content)
+    printWindow.document.close()
+
+    // 自动触发打印对话框
+    setTimeout(() => {
+      printWindow.print()
+    }, 500)
+  }
+}
+
+// Word导出
+function exportWord() {
+  const patientInfo = visitData.value?.patient_name ? `
+    <div style="margin-bottom: 30px; padding: 20px; background-color: #f8f8f8;">
+      <h2 style="margin: 0 0 15px 0; color: var(--color-text);">患者信息</h2>
+      <p style="margin: 5px 0;"><strong>姓名:</strong> ${visitData.value.patient_name}</p>
+      <p style="margin: 5px 0;"><strong>就诊编号:</strong> ${visitData.value.visit_no || '-'}</p>
+      <p style="margin: 5px 0;"><strong>就诊日期:</strong> ${visitData.value.visit_date ? new Date(visitData.value.visit_date).toLocaleDateString('zh-CN') : '-'}</p>
+    </div>
+  ` : ''
+
+  const content = `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset="utf-8">
+        <title>病历记录</title>
+        <style>
+          body { font-family: 'SimSun', 'Microsoft YaHei', sans-serif; }
+          h1 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; }
+          h2 { border-left: 4px solid #667eea; padding-left: 15px; }
+          h3 { color: #667eea; }
+          .field { margin-bottom: 20px; padding: 15px; border: 1px solid #ddd; }
+        .theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
+}
+</style>
+      </head>
+      <body>
+        <h1>病历记录</h1>
+
+        ${patientInfo}
+
+        <h2>病历内容</h2>
+        ${Object.entries(medicalRecord.value).map(([key, value]) => `
+          <div class="field">
+            <h3>${value.name}</h3>
+            <p>${value.content || '无'}</p>
+          </div>
+        `).join('')}
+
+        <div style="margin-top: 40px; font-size: 12px; color: #999; text-align: center;">
+          <p>本病历由AI病历自动生成系统创建</p>
+          <p>生成时间: ${new Date().toLocaleString('zh-CN')}</p>
+        </div>
+      </body>
+    </html>
+  `
+
+  // 创建Blob并下载
+  const blob = new Blob(['\ufeff', content], {
+    type: 'application/msword'
+  })
+
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `病历记录_${visitData.value?.patient_name || '导出'}_${new Date().toISOString().slice(0, 10)}.doc`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -624,25 +978,64 @@ async function exportRecord() {
       <div class="recording-area">
         <!-- 实时录音区域 -->
         <div class="recording-visual">
-          <div :class="['recording-circle', { 'recording': isRecording }]">
+          <div :class="['recording-circle', { 'recording': isRecording, 'paused': isPaused }]">
             <div class="mic-icon">🎤</div>
           </div>
-          <div class="recording-waves" v-if="isRecording">
+          <div class="recording-waves" v-if="isRecording && !isPaused">
             <span v-for="i in 5" :key="i" :style="{ animationDelay: `${i * 0.1}s` }"></span>
           </div>
         </div>
 
         <div class="recording-time">{{ formatTime(recordingTime) }}</div>
         <p class="recording-hint">
-          {{ isRecording ? '正在录音...' : '点击开始录音' }}
+          <span v-if="!isRecording">点击开始录音</span>
+          <span v-else-if="isPaused">录音已暂停</span>
+          <span v-else>正在录音...</span>
         </p>
 
-        <button :class="['record-btn', { 'recording': isRecording }]" @click="toggleRecording">
-          <span class="record-inner"></span>
-        </button>
+        <!-- 录音控制按钮组 -->
+        <div class="recording-controls">
+          <button
+            :class="['control-btn', 'stop-btn', { active: isRecording }]"
+            @click="toggleRecording"
+            :disabled="!isRecording"
+          >
+            <span class="stop-icon"></span>
+            结束
+          </button>
+
+          <button
+            v-if="!isPaused"
+            :class="['control-btn', 'pause-btn', { active: isRecording }]"
+            @click="pauseRecording"
+            :disabled="!isRecording"
+          >
+            <span class="pause-icon">⏸</span>
+            暂停
+          </button>
+
+          <button
+            v-else
+            class="control-btn resume-btn active"
+            @click="resumeRecording"
+          >
+            <span class="resume-icon">▶</span>
+            继续
+          </button>
+
+          <button
+            :class="['control-btn', 'start-btn', { hidden: isRecording }]"
+            @click="startRecording"
+          >
+            <span class="start-icon">●</span>
+            开始
+          </button>
+        </div>
 
         <p class="quality-hint">
           提示: 请保持环境安静，手机距离患者30-50厘米
+          <br />
+          <small v-if="totalPausedTime > 0">已暂停 {{ formatTime(totalPausedTime) }}</small>
         </p>
 
         <!-- 分隔线 -->
@@ -670,7 +1063,16 @@ async function exportRecord() {
             </span>
             <span v-else>📁 上传音频文件</span>
           </button>
-          <p class="upload-hint">支持 MP3, WAV, M4A, AMR, OGG 格式，最大 50MB</p>
+
+          <!-- 上传进度条 -->
+          <div v-if="isUploading" class="upload-progress-container">
+            <div class="upload-progress-bar">
+              <div class="upload-progress-fill" :style="{ width: uploadProgress + '%' }"></div>
+            </div>
+            <div class="upload-progress-text">{{ uploadProgress }}%</div>
+          </div>
+
+          <p class="upload-hint">支持 MP3, WAV, M4A, AMR, OGG 格式，最大 500MB，支持断点续传</p>
         </div>
 
         <!-- 已有录音列表 -->
@@ -746,10 +1148,55 @@ async function exportRecord() {
           <h1>病历编辑</h1>
         </div>
         <div class="header-actions">
-          <button class="action-btn" @click="exportRecord">导出</button>
+          <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+            {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+          </button>
+          <button class="action-btn" @click="openExportModal">导出</button>
           <button class="save-btn" @click="saveMedicalRecord">保存</button>
         </div>
       </header>
+
+      <!-- 导出选项弹窗 -->
+      <div v-if="showExportModal" class="modal-overlay" @click="closeExportModal">
+        <div class="modal-content export-modal" @click.stop>
+          <h2>导出病历</h2>
+          <p class="modal-desc">选择导出格式</p>
+
+          <div class="export-options">
+            <label class="export-option" :class="{ active: exportFormat === 'pdf' }">
+              <input type="radio" v-model="exportFormat" value="pdf" />
+              <span class="option-icon">📄</span>
+              <div class="option-info">
+                <span class="option-name">PDF 文档</span>
+                <span class="option-desc">适合打印和存档</span>
+              </div>
+            </label>
+
+            <label class="export-option" :class="{ active: exportFormat === 'word' }">
+              <input type="radio" v-model="exportFormat" value="word" />
+              <span class="option-icon">📝</span>
+              <div class="option-info">
+                <span class="option-name">Word 文档</span>
+                <span class="option-desc">可编辑的 .doc 格式</span>
+              </div>
+            </label>
+
+            <label class="export-option" :class="{ active: exportFormat === 'print' }">
+              <input type="radio" v-model="exportFormat" value="print" />
+              <span class="option-icon">🖨️</span>
+              <div class="option-info">
+                <span class="option-name">打印</span>
+                <span class="option-desc">直接打印或预览</span>
+              </div>
+            </label>
+          </div>
+
+          <div class="modal-actions">
+            <button class="btn-secondary" @click="closeExportModal">取消</button>
+            <button class="btn-primary" @click="exportRecord">确认导出</button>
+          </div>
+        </div>
+      </div>
 
       <!-- 录音列表 -->
       <div v-if="recordings.length > 0" class="recordings-section">
@@ -870,7 +1317,7 @@ async function exportRecord() {
 <style scoped>
 .visit-detail-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--color-background);
 }
 
 /* Header */
@@ -879,8 +1326,8 @@ async function exportRecord() {
   justify-content: space-between;
   align-items: center;
   padding: 16px 40px;
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 @media (max-width: 768px) {
@@ -899,7 +1346,7 @@ async function exportRecord() {
   background: none;
   border: none;
   font-size: 20px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -925,9 +1372,9 @@ async function exportRecord() {
 }
 
 .action-btn {
-  background: #f0f0f0;
+  background: var(--color-btn-bg);
   border: none;
-  color: #666;
+  color: var(--color-text);
 }
 
 .save-btn {
@@ -1010,7 +1457,7 @@ async function exportRecord() {
 
 .recording-waves span {
   width: 4px;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 2px;
   animation: wave 0.5s ease-in-out infinite alternate;
 }
@@ -1036,7 +1483,7 @@ async function exportRecord() {
 .record-btn {
   width: 80px;
   height: 80px;
-  background: white;
+  background: var(--color-card-bg);
   border: none;
   border-radius: 50%;
   display: flex;
@@ -1062,7 +1509,106 @@ async function exportRecord() {
   width: 30px;
   height: 30px;
   border-radius: 4px;
-  background: white;
+  background: var(--color-card-bg);
+}
+
+/* 新增录音控制按钮样式 */
+.recording-circle.paused {
+  animation: none;
+  opacity: 0.7;
+}
+
+.recording-controls {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  margin: 20px 0;
+}
+
+.control-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+  min-width: 70px;
+}
+
+.control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.control-btn.hidden {
+  display: none;
+}
+
+.control-btn.active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #667eea;
+  border-color: white;
+}
+
+.start-btn {
+  background: #00c853;
+  border-color: #00c853;
+}
+
+.start-btn:hover:not(:disabled) {
+  background: #00b248;
+  transform: scale(1.05);
+}
+
+.pause-btn {
+  background: #ff9800;
+  border-color: #ff9800;
+}
+
+.pause-btn:hover:not(:disabled) {
+  background: #f57c00;
+  transform: scale(1.05);
+}
+
+.resume-btn {
+  background: #00c853;
+  border-color: #00c853;
+}
+
+.resume-btn:hover {
+  background: #00b248;
+  transform: scale(1.05);
+}
+
+.stop-btn {
+  background: #f44336;
+  border-color: #f44336;
+}
+
+.stop-btn:hover:not(:disabled) {
+  background: #d32f2f;
+  transform: scale(1.05);
+}
+
+.start-icon,
+.stop-icon,
+.pause-icon,
+.resume-icon {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.stop-icon {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  border-radius: 3px;
 }
 
 .quality-hint {
@@ -1070,6 +1616,12 @@ async function exportRecord() {
   font-size: 13px;
   opacity: 0.7;
   text-align: center;
+}
+
+.quality-hint small {
+  display: block;
+  margin-top: 8px;
+  opacity: 0.8;
 }
 
 /* Divider */
@@ -1143,6 +1695,36 @@ async function exportRecord() {
   text-align: center;
 }
 
+/* Upload Progress Bar */
+.upload-progress-container {
+  width: 100%;
+  max-width: 300px;
+  margin: 16px 0;
+}
+
+.upload-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.upload-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00c853, #64dd17);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.upload-progress-text {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 8px;
+  color: white;
+}
+
 /* Recordings List */
 .recordings-list {
   margin-top: 40px;
@@ -1186,7 +1768,7 @@ async function exportRecord() {
 
 .status-pending {
   background: #ffc107;
-  color: #333;
+  color: var(--color-text);
 }
 
 .status-processing {
@@ -1221,7 +1803,7 @@ async function exportRecord() {
 }
 
 .play-btn {
-  background: white;
+  background: var(--color-card-bg);
   color: #667eea;
 }
 
@@ -1246,7 +1828,7 @@ async function exportRecord() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: white;
+  background: var(--color-card-bg);
 }
 
 .processing-content {
@@ -1271,11 +1853,11 @@ async function exportRecord() {
 .processing-content h2 {
   font-size: 20px;
   margin-bottom: 10px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .processing-content p {
-  color: #888;
+  color: var(--color-text); opacity: 0.6;
   margin-bottom: 10px;
 }
 
@@ -1308,7 +1890,7 @@ async function exportRecord() {
   align-items: center;
   gap: 10px;
   padding: 12px 40px;
-  background: white;
+  background: var(--color-card-bg);
   margin-bottom: 12px;
 }
 
@@ -1320,7 +1902,7 @@ async function exportRecord() {
 
 .template-bar .label {
   font-size: 14px;
-  color: #666;
+  color: var(--color-text);
 }
 
 .template-select {
@@ -1345,7 +1927,7 @@ async function exportRecord() {
 }
 
 .field-section {
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -1357,13 +1939,13 @@ async function exportRecord() {
   align-items: center;
   padding: 14px 16px;
   background: #f8f8f8;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .field-header h3 {
   margin: 0;
   font-size: 15px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .edit-field-btn {
@@ -1390,8 +1972,8 @@ async function exportRecord() {
 }
 
 .cancel-btn {
-  background: #f0f0f0;
-  color: #666;
+  background: var(--color-btn-bg);
+  color: var(--color-text);
 }
 
 .confirm-btn {
@@ -1407,7 +1989,7 @@ async function exportRecord() {
   margin: 0;
   font-size: 14px;
   line-height: 1.6;
-  color: #333;
+  color: var(--color-text);
 }
 
 /* Edit Area */
@@ -1450,11 +2032,11 @@ async function exportRecord() {
 
 .candidate-btn {
   padding: 6px 12px;
-  background: white;
+  background: var(--color-card-bg);
   border: 1px solid #ddd;
   border-radius: 16px;
   font-size: 13px;
-  color: #333;
+  color: var(--color-text);
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -1473,7 +2055,7 @@ async function exportRecord() {
 /* Transcription Section */
 .transcription-section {
   margin: 20px 12px;
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -1482,7 +2064,7 @@ async function exportRecord() {
   margin: 0;
   padding: 14px 16px;
   font-size: 14px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
   background: #f8f8f8;
 }
@@ -1499,7 +2081,7 @@ async function exportRecord() {
 .transcription-content p {
   margin: 6px 0;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text);
 }
 
 /* Recordings Section in Editing */
@@ -1512,7 +2094,7 @@ async function exportRecord() {
 .recordings-section h3 {
   margin: 0 0 16px 0;
   font-size: 16px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .recordings-grid {
@@ -1522,7 +2104,7 @@ async function exportRecord() {
 }
 
 .recording-card {
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
@@ -1537,7 +2119,7 @@ async function exportRecord() {
 
 .recording-header .recording-time {
   font-size: 14px;
-  color: #333;
+  color: var(--color-text);
   font-weight: 500;
 }
 
@@ -1546,7 +2128,7 @@ async function exportRecord() {
   gap: 16px;
   margin-bottom: 12px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text);
 }
 
 .recording-footer {
@@ -1563,11 +2145,11 @@ async function exportRecord() {
 
 .retry-btn {
   padding: 6px 12px;
-  background: #f0f0f0;
+  background: var(--color-btn-bg);
   border: none;
   border-radius: 6px;
   font-size: 12px;
-  color: #666;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -1581,12 +2163,78 @@ async function exportRecord() {
   background: #f8f8f8;
   border-radius: 8px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text);
 }
 
 .transcription-preview-small p {
   margin: 0;
   line-height: 1.5;
+}
+
+/* Export Modal */
+.export-modal {
+  max-width: 400px !important;
+}
+
+.modal-desc {
+  color: var(--color-text);
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.export-option {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 2px solid #eee;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.export-option:hover {
+  border-color: #667eea;
+}
+
+.export-option.active {
+  border-color: #667eea;
+  background: #f8f9ff;
+}
+
+.export-option input[type="radio"] {
+  display: none;
+}
+
+.option-icon {
+  font-size: 28px;
+  width: 40px;
+  text-align: center;
+}
+
+.option-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.option-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.option-desc {
+  font-size: 13px;
+  color: #999;
+  margin-top: 4px;
 }
 
 @media (max-width: 768px) {
@@ -1597,5 +2245,18 @@ async function exportRecord() {
   .recordings-grid {
     grid-template-columns: 1fr;
   }
+}
+.theme-btn {
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
 }
 </style>

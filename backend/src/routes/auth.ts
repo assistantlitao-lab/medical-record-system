@@ -33,19 +33,55 @@ router.post('/login', asyncHandler(async (req: AuthRequest, res: Response) => {
   }
 
   const user = users[0];
-  const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
-  if (!isValidPassword) {
-    return res.status(401).json({
-      code: 401,
-      message: '手机号或密码错误',
-      error: 'AUTH_FAILED'
+  // 检查账户是否被锁定
+  if (user.locked_until && new Date(user.locked_until) > new Date()) {
+    const lockedMinutes = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+    return res.status(423).json({
+      code: 423,
+      message: `账户已被锁定，请${lockedMinutes}分钟后再试`,
+      error: 'ACCOUNT_LOCKED',
+      locked_until: user.locked_until
     });
   }
 
-  // 更新最后登录时间
+  const isValidPassword = await bcrypt.compare(password, user.password_hash);
+
+  if (!isValidPassword) {
+    // 登录失败，增加失败计数
+    const newFailedCount = (user.failed_login_count || 0) + 1;
+
+    if (newFailedCount >= 5) {
+      // 连续5次失败，锁定30分钟
+      const lockedUntil = new Date(Date.now() + 30 * 60 * 1000); // 30分钟后
+      await pool.execute(
+        'UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?',
+        [newFailedCount, lockedUntil, user.id]
+      );
+      return res.status(423).json({
+        code: 423,
+        message: '连续登录失败5次，账户已锁定30分钟',
+        error: 'ACCOUNT_LOCKED',
+        locked_until: lockedUntil
+      });
+    } else {
+      // 更新失败计数
+      await pool.execute(
+        'UPDATE users SET failed_login_count = ? WHERE id = ?',
+        [newFailedCount, user.id]
+      );
+      return res.status(401).json({
+        code: 401,
+        message: `手机号或密码错误，还剩${5 - newFailedCount}次尝试机会`,
+        error: 'AUTH_FAILED',
+        remaining_attempts: 5 - newFailedCount
+      });
+    }
+  }
+
+  // 登录成功，重置失败计数和锁定状态
   await pool.execute(
-    'UPDATE users SET last_login_at = NOW() WHERE id = ?',
+    'UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = NOW() WHERE id = ?',
     [user.id]
   );
 
@@ -73,6 +109,14 @@ router.post('/logout', asyncHandler(async (req: AuthRequest, res: Response) => {
   res.json({
     code: 200,
     message: '登出成功'
+  });
+}));
+
+// 心跳/活动更新（用于延长会话）
+router.post('/heartbeat', asyncHandler(async (req: AuthRequest, res: Response) => {
+  res.json({
+    code: 200,
+    message: '心跳已接收'
   });
 }));
 

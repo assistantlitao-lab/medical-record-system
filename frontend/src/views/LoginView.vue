@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
 const phone = ref('')
 const password = ref('')
@@ -37,6 +39,9 @@ async function handleLogin() {
 <template>
   <div class="login-page">
     <div class="login-box">
+    <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+      {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+    </button>
       <h1>AI病历自动生成系统</h1>
       <form @submit.prevent="handleLogin">
         <div class="form-group">
@@ -73,10 +78,12 @@ async function handleLogin() {
 }
 
 .login-box {
+  position: relative;
+
   width: 100%;
   max-width: 360px;
   padding: 40px;
-  background: white;
+  background: var(--color-card-bg, white);
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
@@ -85,7 +92,7 @@ h1 {
   text-align: center;
   margin-bottom: 30px;
   font-size: 24px;
-  color: #333;
+  color: var(--color-text, #333);
 }
 
 .form-group {
@@ -95,7 +102,7 @@ h1 {
 input {
   width: 100%;
   padding: 12px 16px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border, #ddd);
   border-radius: 8px;
   font-size: 16px;
   outline: none;
@@ -131,5 +138,21 @@ button:disabled {
   color: #e74c3c;
   margin-bottom: 16px;
   font-size: 14px;
+}
+.theme-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
 }
 </style>

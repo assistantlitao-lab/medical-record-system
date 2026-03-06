@@ -2,9 +2,11 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
 interface TodayStats {
   totalVisits: number
@@ -125,6 +127,9 @@ function getStatusClass(status: string) {
           <h1>病历管理系统</h1>
         </div>
         <div class="user-info">
+          <button class="theme-btn" @click="themeStore.toggleTheme()" title="切换主题">
+            {{ themeStore.themeMode === 'light' ? '☀️' : themeStore.themeMode === 'dark' ? '🌙' : '🔄' }}
+          </button>
           <span class="username">{{ authStore.user?.name || '用户' }}</span>
           <button class="logout-btn" @click="handleLogout">退出</button>
         </div>
@@ -210,13 +215,13 @@ function getStatusClass(status: string) {
 <style scoped>
 .home-page {
   min-height: 100vh;
-  background: #f5f5f5;
+  background: var(--color-background);
 }
 
 /* Header */
 .header {
-  background: white;
-  border-bottom: 1px solid #eee;
+  background: var(--color-card-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .header-content {
@@ -248,7 +253,7 @@ function getStatusClass(status: string) {
 .logo h1 {
   font-size: 20px;
   margin: 0;
-  color: #333;
+  color: var(--color-text);
 }
 
 .user-info {
@@ -258,22 +263,36 @@ function getStatusClass(status: string) {
 }
 
 .username {
-  color: #666;
+  color: var(--color-text); opacity: 0.7;
   font-size: 14px;
 }
 
 .logout-btn {
   padding: 6px 14px;
-  background: #f0f0f0;
+  background: var(--color-btn-bg);
   border: none;
   border-radius: 6px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text); opacity: 0.7;
   cursor: pointer;
 }
 
+.theme-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: var(--color-btn-bg);
+}
+
 .logout-btn:hover {
-  background: #e0e0e0;
+  background: var(--color-btn-bg); border-color: var(--color-border-hover);
 }
 
 /* Main Content */
@@ -292,7 +311,7 @@ function getStatusClass(status: string) {
 .section-title {
   font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--color-text);
   margin: 0 0 16px 0;
 }
 
@@ -308,7 +327,7 @@ function getStatusClass(status: string) {
 }
 
 .stat-card {
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   padding: 20px;
   display: flex;
@@ -347,13 +366,13 @@ function getStatusClass(status: string) {
 .stat-value {
   font-size: 28px;
   font-weight: 600;
-  color: #333;
+  color: var(--color-text);
   line-height: 1;
 }
 
 .stat-label {
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.5;
   margin-top: 4px;
 }
 
@@ -369,7 +388,7 @@ function getStatusClass(status: string) {
 }
 
 .action-card {
-  background: white;
+  background: var(--color-card-bg);
   border: none;
   border-radius: 12px;
   padding: 24px;
@@ -403,7 +422,7 @@ function getStatusClass(status: string) {
 
 /* Recent Visits */
 .recent-visits {
-  background: white;
+  background: var(--color-card-bg);
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
@@ -433,13 +452,13 @@ function getStatusClass(status: string) {
 .visit-info h3 {
   margin: 0 0 6px 0;
   font-size: 15px;
-  color: #333;
+  color: var(--color-text);
 }
 
 .visit-meta {
   margin: 0;
   font-size: 13px;
-  color: #888;
+  color: var(--color-text); opacity: 0.5;
 }
 
 .visit-meta span {
@@ -454,8 +473,8 @@ function getStatusClass(status: string) {
 }
 
 .status-draft {
-  background: #f5f5f5;
-  color: #666;
+  background: var(--color-background);
+  color: var(--color-text); opacity: 0.7;
 }
 
 .status-editing {
@@ -477,6 +496,6 @@ function getStatusClass(status: string) {
 .loading {
   text-align: center;
   padding: 40px;
-  color: #888;
+  color: var(--color-text); opacity: 0.5;
 }
 </style>
