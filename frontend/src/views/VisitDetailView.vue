@@ -19,6 +19,8 @@ const recordingTime = ref(0)
 const totalPausedTime = ref(0)
 const pauseStartTime = ref(0)
 const transcription = ref('')
+const transcriptionProgress = ref(0)
+const currentTranscribingId = ref('')
 const generatedRecord = ref<any>(null)
 const selectedTemplate = ref('')
 const templates = ref<any[]>([])
@@ -304,6 +306,8 @@ function copyToMedicalRecord() {
 
 // 轮询转写状态
 async function pollTranscriptionStatus(recordingId: string) {
+  currentTranscribingId.value = recordingId
+
   const checkStatus = async () => {
     try {
       const res = await fetch(`/api/v1/recordings/${recordingId}/status`, {
@@ -314,6 +318,9 @@ async function pollTranscriptionStatus(recordingId: string) {
 
       const data = await res.json()
       if (data.code === 200) {
+        // 更新进度
+        transcriptionProgress.value = data.data.progress || 0
+
         // 更新录音列表中的状态
         const recording = recordings.value.find(r => r.id === recordingId)
         if (recording) {
@@ -321,16 +328,23 @@ async function pollTranscriptionStatus(recordingId: string) {
           recording.transcription = data.data.transcription
         }
 
+        console.log('转写状态:', data.data.status, '进度:', data.data.progress)
+
         // 如果转写完成，自动生成病历
         if (data.data.status === 'completed' && data.data.transcription) {
+          transcriptionProgress.value = 100
           transcription.value = data.data.transcription
           // 重新加载就诊详情
           await loadVisitDetail()
           // 自动调用AI生成病历
           await autoGenerateMedicalRecord()
+        } else if (data.data.status === 'failed') {
+          // 转写失败
+          alert('转写失败: ' + (data.data.error_msg || '未知错误'))
+          currentStep.value = 'recording'
         } else if (data.data.status === 'processing' || data.data.status === 'pending') {
           // 继续轮询
-          setTimeout(() => checkStatus(), 3000)
+          setTimeout(() => checkStatus(), 2000)
         }
       }
     } catch (e) {
@@ -436,6 +450,9 @@ async function loadTemplates() {
 }
 
 async function loadVisitDetail() {
+  // 如果正在转写中，不切换步骤
+  const wasTranscribing = currentStep.value === 'transcribing' || currentStep.value === 'generating'
+
   try {
     const res = await fetch(`/api/v1/visits/${visitId}`, {
       headers: { 'Authorization': `Bearer ${authStore.token}` }
@@ -454,6 +471,12 @@ async function loadVisitDetail() {
 
       // 加载录音列表
       recordings.value = data.data.recordings || []
+
+      // 如果正在转写或生成中，不切换步骤
+      if (wasTranscribing) {
+        console.log('转写中，跳过步骤切换')
+        return
+      }
 
       // 解析病历内容
       if (data.data.medical_record?.fields) {
@@ -1248,9 +1271,14 @@ function exportWord() {
         <div class="spinner"></div>
         <h2>语音识别中...</h2>
         <p>正在将录音转换为文字</p>
+        <div class="progress-bar" v-if="transcriptionProgress > 0 && transcriptionProgress < 100">
+          <div class="progress-fill" :style="{width: transcriptionProgress + '%'}"></div>
+          <span class="progress-text">{{ transcriptionProgress }}%</span>
+        </div>
         <div class="transcription-preview" v-if="transcription">
           <p v-for="(line, idx) in transcription.split('\n')" :key="idx">{{ line }}</p>
         </div>
+        <p v-else class="hint">请稍候...</p>
       </div>
     </div>
 
@@ -1993,6 +2021,40 @@ function exportWord() {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.progress-bar {
+  width: 80%;
+  max-width: 300px;
+  height: 24px;
+  background: #e0e0e0;
+  border-radius: 12px;
+  margin: 20px auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  border-radius: 12px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  color: #333;
+  font-weight: bold;
+}
+
+.hint {
+  color: #999;
+  font-size: 14px;
+  margin-top: 20px;
 }
 
 .processing-content h2 {
