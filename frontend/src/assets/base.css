@@ -83,30 +83,6 @@
   --color-btn-text: #e0e0e0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: var(--vt-c-black);
-    --color-background-soft: var(--vt-c-black-soft);
-    --color-background-mute: var(--vt-c-black-mute);
-
-    --color-border: var(--vt-c-divider-dark-2);
-    --color-border-hover: var(--vt-c-divider-dark-1);
-
-    --color-heading: var(--vt-c-text-dark-1);
-    --color-text: var(--vt-c-text-dark-2);
-
-    --color-card-bg: #242424;
-    --color-modal-bg: #2c2c2c;
-    --color-input-bg: #2c2c2c;
-    --color-table-header-bg: #2c2c2c;
-    --color-table-stripe-bg: #282828;
-
-    --color-btn-bg: #3a3a3a;
-    --color-btn-border: #4a4a4a;
-    --color-btn-text: #e0e0e0;
-  }
-}
-
 *,
 *::before,
 *::after {

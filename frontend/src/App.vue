@@ -7,6 +7,10 @@ import { useAuthStore } from '@/stores/auth'
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
 
+// 立即强制使用浅色主题
+document.documentElement.classList.remove('dark')
+localStorage.setItem('themeMode', 'light')
+
 onMounted(() => {
   // 初始化主题
   themeStore.init()

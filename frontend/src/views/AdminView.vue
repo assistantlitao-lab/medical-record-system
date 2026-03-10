@@ -80,7 +80,7 @@ async function loadTemplates() {
       throw new Error('加载模板列表失败')
     }
     const result = await response.json()
-    templates.value = result.data.map((t: any) => ({
+    templates.value = (result.data.list || result.data).map((t: any) => ({
       id: t.id,
       name: t.name,
       description: t.description,

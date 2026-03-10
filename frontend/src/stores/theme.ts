@@ -5,7 +5,7 @@ export type ThemeMode = 'light' | 'dark' | 'auto'
 
 export const useThemeStore = defineStore('theme', () => {
   // 从 localStorage 读取主题设置，默认为 auto
-  const themeMode = ref<ThemeMode>(localStorage.getItem('themeMode') as ThemeMode || 'auto')
+  const themeMode = ref<ThemeMode>(localStorage.getItem('themeMode') as ThemeMode || 'light')
   const isDark = ref(false)
 
   // 应用主题
@@ -57,6 +57,9 @@ export const useThemeStore = defineStore('theme', () => {
 
   // 初始化
   function init() {
+    // 强制使用浅色主题，忽略之前保存的设置
+    themeMode.value = 'light'
+    localStorage.setItem('themeMode', 'light')
     applyTheme()
     initThemeListener()
   }

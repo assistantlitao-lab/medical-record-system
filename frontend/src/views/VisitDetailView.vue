@@ -92,7 +92,7 @@ async function uploadFileInChunks(file: File): Promise<string> {
   for (let i = 0; i < totalChunks; i++) {
     const start = i * CHUNK_SIZE
     const end = Math.min(start + CHUNK_SIZE, file.size)
-    const chunk = file.slice(start, end)
+    const chunk = file.slice(start, end, file.type)
 
     const formData = new FormData()
     formData.append('chunk', chunk, `${file.name}.part${i}`)
@@ -106,7 +106,9 @@ async function uploadFileInChunks(file: File): Promise<string> {
     })
 
     if (!chunkRes.ok) {
-      throw new Error(`上传分片 ${i + 1}/${totalChunks} 失败`)
+      const errorText = await chunkRes.text()
+      console.error('分片上传失败:', chunkRes.status, errorText)
+      throw new Error(`上传分片 ${i + 1}/${totalChunks} 失败: ${errorText}`)
     }
 
     // 更新进度

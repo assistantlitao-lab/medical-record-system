@@ -134,6 +134,11 @@ router.post('/users', asyncHandler(async (req: AuthRequest, res: Response) => {
 router.get('/statistics/workload', asyncHandler(async (req: AuthRequest, res: Response) => {
   const { start_date, end_date } = req.query;
 
+  // 设置默认日期范围（今天）
+  const today = new Date().toISOString().slice(0, 10);
+  const safeStartDate = start_date || today;
+  const safeEndDate = end_date || today;
+
   const [stats] = await pool.query(
     `SELECT
       u.id as user_id,
@@ -143,7 +148,7 @@ router.get('/statistics/workload', asyncHandler(async (req: AuthRequest, res: Re
       (SELECT COUNT(*) FROM visit_records WHERE user_id = u.id AND status = 2 AND created_at BETWEEN ? AND ?) as completed_records
      FROM users u
      ORDER BY u.name`,
-    [start_date, end_date, start_date, end_date, start_date, end_date]
+    [safeStartDate, safeEndDate, safeStartDate, safeEndDate, safeStartDate, safeEndDate]
   ) as any;
 
   res.json({
@@ -202,7 +207,9 @@ router.get('/logs', asyncHandler(async (req: AuthRequest, res: Response) => {
     LEFT JOIN users u ON l.user_id = u.id
     WHERE l.created_at BETWEEN ? AND ?
   `;
-  const params: any[] = [start_date, end_date];
+  const defaultEndDate = new Date().toISOString().slice(0, 10);
+  const defaultStartDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const params: any[] = [start_date || defaultStartDate, end_date || defaultEndDate];
 
   if (user_id) {
     sql += ' AND l.user_id = ?';

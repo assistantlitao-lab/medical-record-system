@@ -71,8 +71,8 @@ export function uploadChunk(uploadId: string, chunkIndex: number, chunk: Blob) {
   })
 }
 
-export function completeUpload(uploadId: string) {
-  return request.post(`/recordings/${uploadId}/complete`) as Promise<{ code: number; data: { recording_id: string } }>
+export function completeUpload(uploadId: string, visitId: string, duration?: number) {
+  return request.post(`/recordings/${uploadId}/complete`, { visit_id: visitId, duration }) as Promise<{ code: number; data: { recording_id: string } }>
 }
 
 export function startTranscribe(recordingId: string) {

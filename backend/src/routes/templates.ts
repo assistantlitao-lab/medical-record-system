@@ -145,9 +145,14 @@ router.put('/:template_id', asyncHandler(async (req: AuthRequest, res: Response)
     await pool.execute('UPDATE templates SET is_default = 0');
   }
 
+  // 将 undefined 转换为 null
+  const safeName = name === undefined ? null : name;
+  const safeDescription = description === undefined ? null : description;
+  const safeIsDefault = is_default === undefined ? null : is_default;
+
   await pool.execute(
     'UPDATE templates SET name = COALESCE(?, name), description = COALESCE(?, description), is_default = COALESCE(?, is_default) WHERE id = ?',
-    [name, description, is_default, template_id]
+    [safeName, safeDescription, safeIsDefault, template_id]
   );
 
   res.json({
@@ -256,6 +261,15 @@ router.put('/:template_id/fields/:field_id', asyncHandler(async (req: AuthReques
 
   const { name, field_key, type, required, placeholder, options, sort_order } = req.body;
 
+  // 将 undefined 转换为 null
+  const safeName = name === undefined ? null : name;
+  const safeFieldKey = field_key === undefined ? null : field_key;
+  const safeType = type === undefined ? null : type;
+  const safeRequired = required === undefined ? null : required;
+  const safePlaceholder = placeholder === undefined ? null : placeholder;
+  const safeOptions = options === undefined ? null : (options ? JSON.stringify(options) : null);
+  const safeSortOrder = sort_order === undefined ? null : sort_order;
+
   await pool.execute(
     `UPDATE template_fields SET
       name = COALESCE(?, name),
@@ -266,7 +280,7 @@ router.put('/:template_id/fields/:field_id', asyncHandler(async (req: AuthReques
       options = COALESCE(?, options),
       sort_order = COALESCE(?, sort_order)
     WHERE id = ? AND template_id = ?`,
-    [name, field_key, type, required, placeholder, options ? JSON.stringify(options) : null, sort_order, field_id, template_id]
+    [safeName, safeFieldKey, safeType, safeRequired, safePlaceholder, safeOptions, safeSortOrder, field_id, template_id]
   );
 
   res.json({

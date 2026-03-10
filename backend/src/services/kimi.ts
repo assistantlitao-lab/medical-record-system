@@ -123,25 +123,64 @@ ${correctedText}
   };
 }
 
-// 转写音频
+// 转写音频 - 使用Python faster-whisper
 export async function transcribeAudio(recordingId: string, audioPath: string): Promise<string> {
-  try {
-    const audioBuffer = await fs.readFile(audioPath);
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
 
-    // 使用Kimi的音频转写功能
-    // 注意：这里需要根据实际API调整
-    const response = await kimi.audio.transcriptions.create({
-      model: 'whisper-1',
-      file: new File([audioBuffer], 'audio.mp3', { type: 'audio/mpeg' }),
-      language: 'zh',
-      prompt: '这是一段医患对话，包含医疗术语'
+    console.log('开始转写音频:', audioPath);
+
+    // 创建Python脚本
+    const pythonScript = `
+import sys
+from faster_whisper import WhisperModel
+
+# 使用small模型，支持中文，量化版本
+model_size = "small"
+model = WhisperModel(model_size, device="cpu", compute_type="int8")
+
+segments, info = model.transcribe("${audioPath}", language="zh")
+
+print("语言:", info.language, "概率:", info.language_probability)
+
+result_text = ""
+for segment in segments:
+    result_text += segment.text
+
+print("转写结果:", result_text)
+`;
+
+    const python = spawn('python3', ['-c', pythonScript]);
+
+    let output = '';
+    let errorOutput = '';
+
+    python.stdout.on('data', (data: Buffer) => {
+      output += data.toString();
+      console.log('Python输出:', data.toString().trim());
     });
 
-    return response.text || '';
-  } catch (error: any) {
-    console.error('转写失败:', error);
-    throw new Error('音频转写失败: ' + error.message);
-  }
+    python.stderr.on('data', (data: Buffer) => {
+      errorOutput += data.toString();
+      console.error('Python错误:', data.toString().trim());
+    });
+
+    python.on('close', (code: number) => {
+      if (code === 0) {
+        // 从输出中提取转写结果
+        const match = output.match(/转写结果:\s*(.+)$/m);
+        if (match) {
+          console.log('转写完成');
+          resolve(match[1].trim());
+        } else {
+          resolve(output.replace(/语言:.*?\n/g, '').replace(/转写结果:/g, '').trim());
+        }
+      } else {
+        console.error('转写失败:', errorOutput);
+        reject(new Error('转写失败: ' + errorOutput));
+      }
+    });
+  });
 }
 
 // 流式转写（WebSocket）

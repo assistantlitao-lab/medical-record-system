@@ -1,6 +1,9 @@
 import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import fs from 'fs';
 import pool from '../config/database.js';
+import { config } from '../config/index.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { generateMedicalRecord } from '../services/kimi.js';
@@ -356,6 +359,45 @@ router.post('/:visit_id/generate', asyncHandler(async (req: AuthRequest, res: Re
       error: 'AI_GENERATION_FAILED'
     });
   }
+}));
+
+// 初始化录音上传
+router.post('/:visit_id/recordings/init', asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { visit_id } = req.params;
+  const { filename, file_size, duration, mime_type } = req.body;
+
+  console.log('初始化上传:', filename, file_size, 'visit_id:', visit_id);
+
+  // 生成 upload_id
+  const uploadId = 'upload_' + uuidv4().replace(/-/g, '');
+  const chunkSize = 2 * 1024 * 1024; // 2MB
+  const maxChunks = Math.ceil(file_size / chunkSize);
+
+  // 创建临时目录存储分片
+  const tempDir = path.join(config.upload.dir, 'temp', uploadId);
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+
+  // 存储上传任务信息 - 使用全局的 uploadTasks
+  const { uploadTasks } = await import('./recordings.js');
+  uploadTasks.set(uploadId, {
+    filename,
+    totalChunks: maxChunks,
+    receivedChunks: new Set(),
+    chunkSize,
+    tempDir,
+    visitId: visit_id
+  });
+
+  res.status(201).json({
+    code: 201,
+    data: {
+      upload_id: uploadId,
+      chunk_size: chunkSize,
+      max_chunks: maxChunks
+    }
+  });
 }));
 
 // 删除就诊记录
