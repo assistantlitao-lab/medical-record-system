@@ -212,6 +212,10 @@ async function handleFileUpload(event: Event) {
 // 开始转写
 async function startTranscription(recordingId: string) {
   try {
+    // 设置当前步骤为转写中，显示转写界面
+    currentStep.value = 'transcribing'
+    transcriptionProgress.value = 0
+
     const res = await fetch(`/api/v1/recordings/${recordingId}/transcribe`, {
       method: 'POST',
       headers: {
@@ -229,6 +233,7 @@ async function startTranscription(recordingId: string) {
     pollTranscriptionStatus(recordingId)
   } catch (err: any) {
     console.error('启动转写失败:', err)
+    currentStep.value = 'recording'
     alert(err.message || '启动转写失败')
   }
 }
