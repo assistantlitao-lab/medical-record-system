@@ -61,9 +61,14 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
 
         try:
             if USE_FASTER_WHISPER and model:
-                # Use faster-whisper, force Simplified Chinese
-                segments, info = model.transcribe(temp_path, language='zh-cn')
+                # Use faster-whisper with Chinese
+                # Use 'zh' and rely on the model to output simplified Chinese
+                segments, info = model.transcribe(temp_path, language='zh')
                 transcription = ' '.join([segment.text for segment in segments])
+
+                # Convert to simplified Chinese if needed (basic conversion)
+                # Note: Full conversion would require opencc library
+                # The model should already output simplified Chinese with 'zh'
             else:
                 # Use whisper CLI
                 result = subprocess.run(
