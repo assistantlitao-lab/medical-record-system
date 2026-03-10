@@ -321,11 +321,13 @@ async function pollTranscriptionStatus(recordingId: string) {
           recording.transcription = data.data.transcription
         }
 
-        // 如果转写完成，更新转写文本
+        // 如果转写完成，自动生成病历
         if (data.data.status === 'completed' && data.data.transcription) {
           transcription.value = data.data.transcription
           // 重新加载就诊详情
           await loadVisitDetail()
+          // 自动调用AI生成病历
+          await autoGenerateMedicalRecord()
         } else if (data.data.status === 'processing' || data.data.status === 'pending') {
           // 继续轮询
           setTimeout(() => checkStatus(), 3000)
@@ -337,6 +339,55 @@ async function pollTranscriptionStatus(recordingId: string) {
   }
 
   checkStatus()
+}
+
+// 自动生成病历
+async function autoGenerateMedicalRecord() {
+  if (!transcription.value.trim()) return
+
+  currentStep.value = 'generating'
+
+  try {
+    const res = await fetch(`/api/v1/visits/${visitId}/generate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authStore.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        template_id: selectedTemplate.value,
+        transcription: transcription.value
+      })
+    })
+
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.message || '生成失败')
+    }
+
+    const data = await res.json()
+    if (data.code === 200) {
+      // 解析生成的病历字段
+      const fields: Record<string, any> = {}
+      if (data.data.fields) {
+        data.data.fields.forEach((f: any) => {
+          fields[f.field_key || f.name] = {
+            name: f.label || f.name,
+            content: f.content || '',
+            candidates: f.candidates || []
+          }
+        })
+      }
+      medicalRecord.value = fields
+
+      // 标记为已完成
+      currentStep.value = 'editing'
+      console.log('病历生成成功')
+    }
+  } catch (err: any) {
+    console.error('自动生成病历失败:', err)
+    currentStep.value = 'editing'
+  }
 }
 
 // 播放录音
