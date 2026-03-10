@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import http from 'http';
 import pool from '../config/database.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
@@ -287,24 +288,50 @@ router.post('/:recording_id/transcribe', asyncHandler(async (req: AuthRequest, r
   const whisperHost = process.env.WHISPER_HOST || 'host.docker.internal';
   const whisperPort = process.env.WHISPER_PORT || '8765';
   const whisperUrl = `http://${whisperHost}:${whisperPort}/transcribe`;
+  console.log('Whisper URL:', whisperUrl);
 
   // 读取音频文件并发送到转写服务
   const audioBuffer = fs.readFileSync(audioPath);
+  console.log('音频文件大小:', audioBuffer.length);
 
   try {
-    const response = await fetch(whisperUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'audio/wav'
-      },
-      body: audioBuffer
+    // 使用 http 模块发送请求
+    const result = await new Promise<any>((resolve, reject) => {
+      const urlObj = new URL(whisperUrl);
+      const req = http.request({
+        hostname: urlObj.hostname,
+        port: urlObj.port || 8765,
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'audio/wav',
+          'Content-Length': audioBuffer.length
+        },
+        timeout: 600000  // 10分钟超时
+      }, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: any) => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            resolve(result);
+          } catch (e: any) {
+            reject(new Error(`Invalid JSON response: ${data.substring(0, 100)}`));
+          }
+        });
+      });
+
+      req.on('error', (e: any) => reject(e));
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout'));
+      });
+
+      req.write(audioBuffer);
+      req.end();
     });
 
-    if (!response.ok) {
-      throw new Error(`Transcription failed: ${response.status}`);
-    }
-
-    const result = await response.json() as any;
+    console.log('Whisper 返回结果:', result.success ? '成功' : '失败');
 
     if (result.success) {
       await pool.execute(
@@ -316,10 +343,11 @@ router.post('/:recording_id/transcribe', asyncHandler(async (req: AuthRequest, r
       throw new Error(result.error || 'Transcription failed');
     }
   } catch (e: any) {
-    console.error('转写失败:', e.message);
+    console.error('转写失败:', e.message, e.cause || '');
+    const errorMsg = e.cause ? `${e.message}: ${e.cause}` : e.message;
     await pool.execute(
       'UPDATE recordings SET status = 3, error_msg = ? WHERE id = ?',
-      [e.message, recording_id]
+      [errorMsg, recording_id]
     );
   }
 
