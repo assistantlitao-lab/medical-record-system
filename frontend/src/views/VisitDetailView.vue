@@ -244,6 +244,64 @@ function downloadTranscription(text: string, filename: string = 'transcription.t
   URL.revokeObjectURL(url)
 }
 
+// 将转写文本复制到病历内容
+function copyToMedicalRecord() {
+  if (!transcription.value.trim()) {
+    alert('没有转写文本')
+    return
+  }
+
+  // 跳转到编辑页面
+  currentStep.value = 'editing'
+
+  // 如果没有病历内容，创建一个默认结构
+  if (!medicalRecord.value || Object.keys(medicalRecord.value).length === 0) {
+    medicalRecord.value = {
+      chief_complaint: {
+        name: '主诉',
+        content: '',
+        candidates: []
+      },
+      history_present_illness: {
+        name: '现病史',
+        content: '',
+        candidates: []
+      },
+      physical_examination: {
+        name: '体格检查',
+        content: '',
+        candidates: []
+      },
+      diagnosis: {
+        name: '诊断',
+        content: '',
+        candidates: []
+      },
+      treatment_plan: {
+        name: '治疗方案',
+        content: '',
+        candidates: []
+      }
+    }
+  }
+
+  // 将转写文本填入现病史字段
+  if (medicalRecord.value.history_present_illness) {
+    medicalRecord.value.history_present_illness.content = transcription.value
+  } else {
+    // 找到第一个字段填入
+    const firstKey = Object.keys(medicalRecord.value)[0]
+    if (firstKey) {
+      medicalRecord.value[firstKey].content = transcription.value
+    }
+  }
+
+  // 提示用户
+  setTimeout(() => {
+    alert('转写文本已复制到病历，请手动编辑各字段内容')
+  }, 500)
+}
+
 // 轮询转写状态
 async function pollTranscriptionStatus(recordingId: string) {
   const checkStatus = async () => {
@@ -1328,13 +1386,20 @@ function exportWord() {
         <h3 @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('expanded')">
           原始转写文本 ▼
         </h3>
-        <button
-          class="download-btn"
-          style="margin-left: auto; margin-bottom: 8px;"
-          @click="downloadTranscription(transcription, '转写文本.txt')"
-        >
-          下载文本
-        </button>
+        <div class="transcription-actions">
+          <button
+            class="download-btn"
+            @click="downloadTranscription(transcription, '转写文本.txt')"
+          >
+            下载文本
+          </button>
+          <button
+            class="convert-btn"
+            @click="copyToMedicalRecord"
+          >
+            转为病历
+          </button>
+        </div>
         <div class="transcription-content">
           <p v-for="(line, idx) in transcription.split('\n')" :key="idx">{{ line }}</p>
         </div>
@@ -2105,6 +2170,26 @@ function exportWord() {
 
 .transcription-content.expanded {
   display: block;
+}
+
+.transcription-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.convert-btn {
+  padding: 6px 12px;
+  background: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.convert-btn:hover {
+  background: #1976D2;
 }
 
 .transcription-content p {
