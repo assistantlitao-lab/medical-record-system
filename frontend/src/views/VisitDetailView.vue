@@ -231,6 +231,19 @@ async function startTranscription(recordingId: string) {
   }
 }
 
+// 下载转写文本
+function downloadTranscription(text: string, filename: string = 'transcription.txt') {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 // 轮询转写状态
 async function pollTranscriptionStatus(recordingId: string) {
   const checkStatus = async () => {
@@ -1241,6 +1254,13 @@ function exportWord() {
             <div v-if="recording.transcription" class="transcription-preview-small">
               <p>{{ recording.transcription.substring(0, 100) }}{{ recording.transcription.length > 100 ? '...' : '' }}</p>
             </div>
+            <button
+              v-if="recording.transcription"
+              class="download-btn"
+              @click="downloadTranscription(recording.transcription, `转写文本_${recording.filename || 'recording'}.txt`)"
+            >
+              下载文本
+            </button>
           </div>
         </div>
       </div>
@@ -1304,10 +1324,17 @@ function exportWord() {
       </div>
 
       <!-- 原始转写文本 -->
-      <div class="transcription-section">
+      <div class="transcription-section" v-if="transcription">
         <h3 @click="($event.target as HTMLElement).nextElementSibling?.classList.toggle('expanded')">
           原始转写文本 ▼
         </h3>
+        <button
+          class="download-btn"
+          style="margin-left: auto; margin-bottom: 8px;"
+          @click="downloadTranscription(transcription, '转写文本.txt')"
+        >
+          下载文本
+        </button>
         <div class="transcription-content">
           <p v-for="(line, idx) in transcription.split('\n')" :key="idx">{{ line }}</p>
         </div>
@@ -2157,6 +2184,21 @@ function exportWord() {
 
 .retry-btn:hover {
   background: #e0e0e0;
+}
+
+.download-btn {
+  padding: 6px 12px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.download-btn:hover {
+  background: #45a049;
 }
 
 .transcription-preview-small {
