@@ -334,9 +334,8 @@ async function pollTranscriptionStatus(recordingId: string) {
         if (data.data.status === 'completed' && data.data.transcription) {
           transcriptionProgress.value = 100
           transcription.value = data.data.transcription
-          // 重新加载就诊详情
-          await loadVisitDetail()
-          // 自动调用AI生成病历
+          console.log('转写完成，开始生成病历')
+          // 直接调用AI生成病历，不重新加载页面
           await autoGenerateMedicalRecord()
         } else if (data.data.status === 'failed') {
           // 转写失败
